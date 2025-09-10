@@ -9,7 +9,7 @@ The RealsenseRecord project provides tools for acquiring, recording and synchron
 Use the following steps to download and compile the project:
 ```bash
 # Clone the repository
-git clone http://git.ehourdakis.com/RealsenseRecord
+git clone https://github.com/ehourdakis/RealsenseRecord.git
 ```
 ***
 **If you are looking for a quick way to record data, then you can skip to the [Calibration of the RGB and Depth sensors](#CalibratingRGBD) section, for instructions on how to calibrate the camera, and then to the [Docker](#Docker) section, for instructions on how to run a pre-compiled version of the application, to record data seamlessly.**
