@@ -6,54 +6,111 @@
 
 #include <iostream>
 #include <map>
+#include <vector>
 #include <chrono>
 #include <mutex>
 #include <thread>
 #include <fstream>
+#include <algorithm>  // for std::find
 #include <boost/program_options.hpp> // command line argument options
 #include <boost/algorithm/string.hpp>
-#include <sys/ioctl.h> // For FIONREAD
-#include <termios.h>  // For struct termios, tcgetattr, ICANON
+#include <sys/ioctl.h> // for FIONREAD
+#include <termios.h>  // for struct termios, tcgetattr, ICANON
+
+// Retrieve combinations of supported RGB/depth resolutions + frame rates, as well as accel/gyro frequencies
+bool retrieve_res_and_rate_combos(const rs2::device& dev, const rs2_format rgb_fmt, const rs2_format depth_fmt,
+        std::map<std::pair<int, int>, std::vector<int>>& rgb_res_n_fps,
+        std::map<std::pair<int, int>, std::vector<int>>& depth_res_n_fps,
+        std::pair<std::vector<int>, std::vector<int>>& accel_n_gyro)
+{
+    // Clear outputs
+    rgb_res_n_fps.clear();
+    depth_res_n_fps.clear();
+    accel_n_gyro = std::make_pair(std::vector<int>{}, std::vector<int>{});
+
+    try {
+        // Enumerate sensors on the provided device
+        std::vector<rs2::sensor> sensors = dev.query_sensors();
+
+        for (rs2::sensor& sensor : sensors) {
+            // Enumerate all supported stream profiles for this sensor
+            for (rs2::stream_profile profile : sensor.get_stream_profiles()) {
+                // Try to cast to video stream profile
+                if (rs2::video_stream_profile video_profile = profile.as<rs2::video_stream_profile>()) {
+                    auto type = video_profile.stream_type();
+                    int fps = video_profile.fps();
+
+                    if (type == RS2_STREAM_COLOR && video_profile.format() == rgb_fmt) {
+                        rgb_res_n_fps[{video_profile.width(), video_profile.height()}].push_back(fps);
+                    } else if (type == RS2_STREAM_DEPTH && video_profile.format() == depth_fmt) {
+                        depth_res_n_fps[{video_profile.width(), video_profile.height()}].push_back(fps);
+                    }
+                }
+                // Motion sensors: accelerometer and gyroscope
+                else if (rs2::motion_stream_profile motion_profile = profile.as<rs2::motion_stream_profile>()) {
+                    int freq = motion_profile.fps();
+                    if (motion_profile.stream_type() == RS2_STREAM_ACCEL) {
+                        accel_n_gyro.first.push_back(freq);
+                    } else if (motion_profile.stream_type() == RS2_STREAM_GYRO) {
+                        accel_n_gyro.second.push_back(freq);
+                    }
+                }
+            }
+        }
+
+        // Check that something was found
+        if (rgb_res_n_fps.empty() && depth_res_n_fps.empty() &&
+            accel_n_gyro.first.empty() && accel_n_gyro.second.empty()) {
+            std::cerr << "Warning: No supported RGB/Depth/Motion profiles found for the given device in retrieve_res_and_rate_combos().\n";
+            return false;
+        }
+
+        return true;
+    }
+    catch (const rs2::error& e) {
+        std::cerr << "RealSense error in retrieve_res_and_rate_combos(): "
+                  << e.what() << " (" << e.get_failed_function() << ")\n";
+        return false;
+    }
+}
 
 namespace po = boost::program_options;
 
-// Table of acceptable frame size / fps pairs for the D455 camera.
-std::map<std::pair<int, int>, std::vector<int>> fps_table = {
-    {{1280, 800}, {30, 15, 10, 5}},
-    {{1280, 720}, {30, 15, 10, 5}},
-    {{848, 480}, {60, 30, 15, 5}},
-    {{640, 480}, {60, 30, 15, 5}},
-    {{640, 360}, {90, 60, 30, 15, 5}},
-    {{480, 270}, {90, 60, 30, 15, 5}}
-};
-
 // validate the value of the accelerometer fps
-bool validate_acc_fps(const int option_value) {
-  const std::vector<int> allowed_values = {250, 63}; // allowed values
+bool validate_acc_fps(const std::vector<int>& allowed_values, const int option_value) {
   if (std::find(allowed_values.begin(), allowed_values.end(), option_value) == allowed_values.end()) {
-    std::cout << "Invalid accelerometer fps. Allowed values are {250, 63}\n";
+    std::cout << "Invalid accelerometer fps " << option_value << ". Allowed values are: ";
+    for (int val : allowed_values) {
+        std::cout << val << " ";
+    }
+    std::cout << "\n";
     return false;
   }
   return true;
 }
 
 // validate the value of the gyroscope fps
-bool validate_gyro_fps(const int option_value) {
-  const std::vector<int> allowed_values = {400, 200}; // allowed values
+bool validate_gyro_fps(const std::vector<int>& allowed_values, const int option_value) {
   if (std::find(allowed_values.begin(), allowed_values.end(), option_value) == allowed_values.end()) {
-    std::cout << "Invalid gyro fps. Allowed values are {400, 200}\n";
+    std::cout << "Invalid gyro fps " << option_value << ". Allowed values are: ";
+    for (int val : allowed_values) {
+        std::cout << val << " ";
+    }
+    std::cout << "\n";
     return false;
   }
   return true;
 }
 
 // validate whether the combination frame size / fps exists
-bool validate_frame_properties(int frame_width, int frame_height, int opt_framerate) {
-    auto it = fps_table.find({frame_width, frame_height});
-    if (it == fps_table.end()) {
+bool validate_frame_properties(const std::map<std::pair<int, int>, std::vector<int> >& res_and_fps,
+    int frame_width, int frame_height, int opt_framerate) {
+
+    auto it = res_and_fps.find({frame_width, frame_height});
+    if (it == res_and_fps.end()) {
         std::cout << "Invalid frame resolution: " << std::to_string(frame_width) << "x" << std::to_string(frame_height) << std::endl;
         std::cout << "Available resolutions are: " << std::endl;
-        for (auto f : fps_table) {
+        for (auto f : res_and_fps) {
             std::cout << "  " << f.first.first << "x" << f.first.second << std::endl;
         }
 
@@ -64,10 +121,11 @@ bool validate_frame_properties(int frame_width, int frame_height, int opt_framer
     auto fps_vec = it->second;
     if (std::find(fps_vec.begin(), fps_vec.end(), fps) == fps_vec.end()) {
         std::cout << "Invalid frame rate for resolution " << frame_width << "x" << std::to_string(frame_height) << ": " << std::to_string(opt_framerate) << std::endl;
-        std::cout << "Available framerates for " << frame_width << "x" << frame_height << ":" << std::endl;
+        std::cout << "Available framerates for " << frame_width << "x" << frame_height << ":";
         for (auto f : fps_vec) {
-            std::cout << "  " << f << " Hz" << std::endl;
+            std::cout << " " << f;
         }
+        std::cout << " (Hz)" << std::endl;
 
         return false;
     }
@@ -102,6 +160,7 @@ int main(int argc, char * argv[])
 {
     // Default application parameters 
     std::string data_dir = "/home/";
+    std::string dev_serial = "";
     int dataset_size = 500;
     int opt_framerate = 90;
     int frame_width = 640;
@@ -115,6 +174,7 @@ int main(int argc, char * argv[])
     desc.add_options()
         ("help,h", "Help message")
         ("dataset_dir", po::value<std::string>(&data_dir)->required(), "Directory to save the recorded dataset")
+        ("dev_serial", po::value<std::string>(&dev_serial)->default_value(""), "Serial number of RS device to use")
         ("dataset_size", po::value<int>(&dataset_size), "Size of the recorded dataset")
         ("rgb_fps", po::value<int>(&opt_framerate)->default_value(60), "Depth frame rate")
         ("frame_width", po::value<int>(&frame_width)->default_value(640), "Frame width")
@@ -138,20 +198,77 @@ int main(int argc, char * argv[])
     po::variables_map vm;
     try {
         po::store(po::command_line_parser(argc, argv).options(desc).positional(p).run(), vm);
-        
+
+        po::notify(vm);
+    } catch (const po::error &e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        std::cerr << "Usage: " << argv[0] << " [options]\n";
+        std::cerr << desc;
+        return -1;
+    }
+
+    //rs2::log_to_console(RS2_LOG_SEVERITY_DEBUG);
+    rs2::context ctx;
+    rs2::device_list devices = ctx.query_devices();
+    if (devices.size() == 0) {
+        std::cout << "No RealSense devices connected." << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    int devidx = -1;
+    if (!dev_serial.empty()) {
+        // Iterate over the detected RS cameras.
+        for (size_t i = 0; i < devices.size(); ++i) {
+            if (devices[i].supports(RS2_CAMERA_INFO_SERIAL_NUMBER) && dev_serial == devices[i].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER)) {
+                devidx = i;
+		break;
+            }
+        }
+    }
+    else {
+        // Use first detected camera.
+        devidx = 0;
+    }
+    if (devidx == -1) {
+        std::cout << "No RealSense device with serial " << dev_serial << " found." << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    const rs2::device& dev = devices[devidx];
+    const std::string serial = dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+
+    // Tables of acceptable frame size / fps pairs for the RS camera.
+    std::map<std::pair<int, int>, std::vector<int>> rgb_res_and_fps, depth_res_and_fps;
+    std::pair<std::vector<int>, std::vector<int>> accel_and_gyro;
+    retrieve_res_and_rate_combos(dev, RS2_FORMAT_RGB8, RS2_FORMAT_Z16, rgb_res_and_fps, depth_res_and_fps, accel_and_gyro);
+
         if (vm.count("help")) {
             std::cout << "RealsenseRecord. Record sensor data from a realsense camera" << std::endl << std::endl;
             std::cout << "Run as: " << std::endl;
-            std::cout << argv[0] << "data/ 1000 30" << std::endl << std::endl << std::endl;
+            std::cout << argv[0] << " data/ 1000 30" << std::endl << std::endl << std::endl;
 
             std::cout << desc << "\n";
 
-            std::cout << "Available camera frame size / frame rates:" << std::endl;
-            for (const auto& kv : fps_table) {
+            std::cout << "Available camera RGB frame size & frame rates:" << std::endl;
+            for (const auto& kv : rgb_res_and_fps) {
                 int width = kv.first.first;
                 int height = kv.first.second;
                 const auto& fps_vec = kv.second;
-                
+
+                std::cout << "  " << width << "x" << height << ": ";
+                for (size_t i = 0; i < fps_vec.size(); ++i) {
+                    if (i > 0) std::cout << ", ";
+                    std::cout << fps_vec[i];
+                }
+                std::cout << std::endl;
+            }
+
+            std::cout << "Available camera Depth frame size & frame rates:" << std::endl;
+            for (const auto& kv : depth_res_and_fps) {
+                int width = kv.first.first;
+                int height = kv.first.second;
+                const auto& fps_vec = kv.second;
+
                 std::cout << "  " << width << "x" << height << ": ";
                 for (size_t i = 0; i < fps_vec.size(); ++i) {
                     if (i > 0) std::cout << ", ";
@@ -163,17 +280,11 @@ int main(int argc, char * argv[])
             return 0;
         }
 
-        po::notify(vm);
-    } catch (const po::error &e) {
-        std::cerr << "Error: " << e.what() << "\n";
-        std::cerr << "Usage: " << argv[0] << " [options]\n";
-        std::cerr << desc;
-        return -1;
-    }
-    
-    if( !validate_frame_properties(frame_width, frame_height, opt_framerate) ||
-        !validate_acc_fps(acc_framerate) || 
-        !validate_gyro_fps(gyro_framerate) )
+
+    if( !validate_frame_properties(rgb_res_and_fps, frame_width, frame_height, opt_framerate) ||
+        !validate_frame_properties(depth_res_and_fps, frame_width, frame_height, opt_framerate) ||
+        !validate_acc_fps(accel_and_gyro.first, acc_framerate) ||
+        !validate_gyro_fps(accel_and_gyro.second, gyro_framerate) )
         return -1;
 
     if (!check_imu_is_supported()) {
@@ -181,9 +292,9 @@ int main(int argc, char * argv[])
         return EXIT_FAILURE;
     }
 
-    std::cout << "RealSense Record - Asynchronious mode.\n";
+    std::cout << "RealSense Record - Asynchronous mode.\n";
     std::cout << "Recording in " << data_dir << std::endl;
-    std::cout << "Optical FPS: " << opt_framerate << "\nAccelerometer FPS: " << acc_framerate << "\nGyroscope FPS: " << gyro_framerate << "\nImage Width: " << frame_width << "\nImage Height: " << frame_height << std::endl;
+    std::cout << "Optical FPS: " << opt_framerate << "\nImage Width: " << frame_width << "\nImage Height: " << frame_height << "\nAccelerometer FPS: " << acc_framerate << "\nGyroscope FPS: " << gyro_framerate << std::endl;
 
     // Setup the database folders and index files
     create_dir_if_not_exists(data_dir);
@@ -222,7 +333,7 @@ int main(int argc, char * argv[])
 
     rs2::log_to_console(RS2_LOG_SEVERITY_ERROR);
 
-    //Structures for indexing the data frames, based on their timestamps
+    // Structures for indexing the data frames, based on their timestamps
     std::map<double, rs2_vector> gyrs;
     std::map<double, rs2_vector> accs;
     std::map<double, cv::Mat> rgbs;
@@ -231,17 +342,8 @@ int main(int argc, char * argv[])
     // Access mutex
     std::mutex mutex;
 
-    // Load a camera configuration
-    rs2::config     cfg;
-	rs2::context    ctx;
-	auto devices    = ctx.query_devices();
-	rs2::device dev = devices[0];
-
-	rs2::pipeline pipe(ctx);
-
-    std::string serial = dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-	std::string json_file_name = "../configs/high_density.json";
-    std::cout << "Configuring camera : " << serial << std::endl;
+    std::string json_file_name = "../configs/high_density.json";
+    std::cout << "Configuring camera: " << serial << std::endl;
     
     // Query which device sensors are used to in case you want to configure them
     std::cout << "Active Sensors: " << "(0) " << get_sensor_name(dev.query_sensors()[0]) << " (1) " << get_sensor_name(dev.query_sensors()[1]) << " (2) " << get_sensor_name(dev.query_sensors()[2]) << std::endl;
@@ -282,6 +384,7 @@ int main(int argc, char * argv[])
 	}
 
     // Enable the device using the requested formats
+    rs2::config cfg;
     try
     {
         cfg.enable_device(serial);
@@ -296,7 +399,7 @@ int main(int argc, char * argv[])
         std::cerr << "Error enabling stream. " << e.get_failed_function() << "(" << e.get_failed_args() << "):\n    " << e.what() << std::endl;
         return EXIT_FAILURE;
     }
-    
+
     std::cout << "--- Starting pipe ---" << std::endl;
     
     // Align the color stream to the depth stream
@@ -402,6 +505,8 @@ int main(int argc, char * argv[])
     };
 
     // Start pipe and load the configuration file    
+    rs2::pipeline pipe(ctx);
+
     rs2::pipeline_profile profiles = pipe.start(cfg, callback);
     
     // Get the device intrinsics
@@ -449,7 +554,7 @@ int main(int argc, char * argv[])
     // Wait for one second to make sure all data have arrived and stop the device
     std::this_thread::sleep_for(std::chrono::seconds(1));
     {
-        //Lock the pipe stopping to make sure that no data are left in the callback 
+        // Lock the pipe stopping to make sure that no data are left in the callback
         std::lock_guard<std::mutex> lock(mutex);
         std::cout << std::endl << "Stopping device" << std::endl;
         pipe.stop();
