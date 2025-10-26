@@ -179,7 +179,7 @@ int main(int argc, char * argv[])
         ("rgb_fps", po::value<int>(&opt_framerate)->default_value(60), "Depth frame rate")
         ("frame_width", po::value<int>(&frame_width)->default_value(640), "Frame width")
         ("frame_height", po::value<int>(&frame_height)->default_value(360), "Frame height")
-        ("acc_framerate", po::value<int>(&acc_framerate)->default_value(250), "Accelerometer framerate")
+        ("acc_framerate", po::value<int>(&acc_framerate)->default_value(200), "Accelerometer framerate")
         ("gyro_framerate", po::value<int>(&gyro_framerate)->default_value(400), "Gyroscope framerate")
         ("rgb_exposure", po::value<int>(&rgb_exposure)->default_value(200), "RGB exposure")
         ("depth_exposure", po::value<int>(&depth_exposure)->default_value(10), "Depth exposure");
@@ -410,12 +410,10 @@ int main(int argc, char * argv[])
     bool bfirst = false;
     auto bUserExit = false;
 
-    // true if the user set the dataset_size in the cmd line arguments
-    auto user_dataset_size = vm.count("dataset_size");
-
     // callback that checks user input for the escape button or dataset end
     auto do_record = [&]() {
-        return !bUserExit && (user_dataset_size || (depths.size() <= dataset_size));
+        // Stop if ESC pressed, record until dataset_size limit reached (if > 0)
+        return !bUserExit && ((dataset_size <= 0) || (depths.size() < static_cast<size_t>(dataset_size)));
     };
 
     // The callback is executed on a sensor thread and can be called simultaneously from multiple sensors
@@ -437,13 +435,13 @@ int main(int argc, char * argv[])
             // std::this_thread::sleep_for(std::chrono::seconds(5)); bfirst=false;
             if(ts >= wait_time) 
             {
-                bfirst = true; 
+                bfirst = true;
                 std::cout << "Recording ";
                 
-                if(user_dataset_size) 
+                if(dataset_size > 0)
                     std::cout << std::to_string(dataset_size).c_str() << '\0';
                 else 
-                    std::cout << "until esc is pressed" << '\0';; 
+                    std::cout << "until Esc is pressed" << '\0';
                 
                 std::cout << "                     " << std::endl; // remove trailing characters from previous cout
     
@@ -558,7 +556,7 @@ int main(int argc, char * argv[])
         std::lock_guard<std::mutex> lock(mutex);
         std::cout << std::endl << "Stopping device" << std::endl;
         pipe.stop();
-        std::cout << "Stopped" << std::endl;
+        std::cout << "Stopped with " <<  depths.size() << " frames" << std::endl;
         BEEP_OFF;   // Notify with sound that the camera stoped recording
     }
 

@@ -1,5 +1,5 @@
-project(RealseRecorder)
 cmake_minimum_required(VERSION 3.1)
+project(RealseRecorder)
 
 # A minimal build configuration, with the 14 standard
 SET (CMAKE_BUILD_TYPE RELEASE CACHE STRING "Build configuration" FORCE)
