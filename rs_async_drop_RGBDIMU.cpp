@@ -6,7 +6,6 @@
 
 #include <iostream>
 #include <map>
-#include <vector>
 #include <chrono>
 #include <mutex>
 #include <thread>
@@ -16,65 +15,6 @@
 #include <boost/algorithm/string.hpp>
 #include <sys/ioctl.h> // for FIONREAD
 #include <termios.h>  // for struct termios, tcgetattr, ICANON
-
-// Retrieve combinations of supported RGB/depth resolutions + frame rates, as well as accel/gyro frequencies
-bool retrieve_res_and_rate_combos(const rs2::device& dev, const rs2_format rgb_fmt, const rs2_format depth_fmt,
-        std::map<std::pair<int, int>, std::vector<int>>& rgb_res_n_fps,
-        std::map<std::pair<int, int>, std::vector<int>>& depth_res_n_fps,
-        std::pair<std::vector<int>, std::vector<int>>& accel_n_gyro)
-{
-    // Clear outputs
-    rgb_res_n_fps.clear();
-    depth_res_n_fps.clear();
-    accel_n_gyro = std::make_pair(std::vector<int>{}, std::vector<int>{});
-
-    try {
-        // Enumerate sensors on the provided device
-        std::vector<rs2::sensor> sensors = dev.query_sensors();
-
-        for (rs2::sensor& sensor : sensors) {
-            // Enumerate all supported stream profiles for this sensor
-            for (rs2::stream_profile profile : sensor.get_stream_profiles()) {
-                // Try to cast to video stream profile
-                if (rs2::video_stream_profile video_profile = profile.as<rs2::video_stream_profile>()) {
-                    auto type = video_profile.stream_type();
-                    int fps = video_profile.fps();
-
-                    if (type == RS2_STREAM_COLOR && video_profile.format() == rgb_fmt) {
-                        rgb_res_n_fps[{video_profile.width(), video_profile.height()}].push_back(fps);
-                    } else if (type == RS2_STREAM_DEPTH && video_profile.format() == depth_fmt) {
-                        depth_res_n_fps[{video_profile.width(), video_profile.height()}].push_back(fps);
-                    }
-                }
-                // Motion sensors: accelerometer and gyroscope
-                else if (rs2::motion_stream_profile motion_profile = profile.as<rs2::motion_stream_profile>()) {
-                    int freq = motion_profile.fps();
-                    if (motion_profile.stream_type() == RS2_STREAM_ACCEL) {
-                        accel_n_gyro.first.push_back(freq);
-                    } else if (motion_profile.stream_type() == RS2_STREAM_GYRO) {
-                        accel_n_gyro.second.push_back(freq);
-                    }
-                }
-            }
-        }
-
-        // Check that something was found
-        if (rgb_res_n_fps.empty() && depth_res_n_fps.empty() &&
-            accel_n_gyro.first.empty() && accel_n_gyro.second.empty()) {
-            std::cerr << "Warning: No supported RGB/Depth/Motion profiles found for the given device in retrieve_res_and_rate_combos().\n";
-            return false;
-        }
-
-        return true;
-    }
-    catch (const rs2::error& e) {
-        std::cerr << "RealSense error in retrieve_res_and_rate_combos(): "
-                  << e.what() << " (" << e.get_failed_function() << ")\n";
-        return false;
-    }
-}
-
-namespace po = boost::program_options;
 
 // validate the value of the accelerometer fps
 bool validate_acc_fps(const std::vector<int>& allowed_values, const int option_value) {
@@ -155,6 +95,8 @@ int kbhit() {
     ioctl(STDIN, FIONREAD, &nbbytes);  // 0 is STDIN
     return nbbytes;
 }
+
+namespace po = boost::program_options;
 
 int main(int argc, char * argv[]) 
 {
@@ -240,7 +182,9 @@ int main(int argc, char * argv[])
     // Tables of acceptable frame size / fps pairs for the RS camera.
     std::map<std::pair<int, int>, std::vector<int>> rgb_res_and_fps, depth_res_and_fps;
     std::pair<std::vector<int>, std::vector<int>> accel_and_gyro;
-    retrieve_res_and_rate_combos(dev, RS2_FORMAT_RGB8, RS2_FORMAT_Z16, rgb_res_and_fps, depth_res_and_fps, accel_and_gyro);
+    int dpth_idx, rgb_idx;
+    retrieve_res_and_rate_combos(dev, RS2_FORMAT_RGB8, RS2_FORMAT_Z16,
+                    rgb_res_and_fps, rgb_idx, depth_res_and_fps, dpth_idx, accel_and_gyro);
 
         if (vm.count("help")) {
             std::cout << "RealsenseRecord. Record sensor data from a realsense camera" << std::endl << std::endl;
@@ -346,15 +290,21 @@ int main(int argc, char * argv[])
     std::cout << "Configuring camera: " << serial << std::endl;
     
     // Query which device sensors are used to in case you want to configure them
-    std::cout << "Active Sensors: " << "(0) " << get_sensor_name(dev.query_sensors()[0]) << " (1) " << get_sensor_name(dev.query_sensors()[1]) << " (2) " << get_sensor_name(dev.query_sensors()[2]) << std::endl;
-    
+    std::vector<rs2::sensor> sensors = dev.query_sensors();
+    std::cout << "Active Sensors: " << "(0) -> " << get_sensor_name(sensors[0]) << ", (1) -> " << get_sensor_name(sensors[1]) << ", (2) -> " << get_sensor_name(sensors[2]) << std::endl;
+    // This check is redundant but does no harm
+    if (dpth_idx < 0 || rgb_idx < 0) {
+        std::cerr << "Failed to find depth or RGB sensor!" << std::endl;
+        return EXIT_FAILURE;
+    }
+
     // Change the RGB and depth autoexposure parameter
     try
     {
-        dev.query_sensors()[0].set_option(rs2_option::RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0);
-        dev.query_sensors()[1].set_option(rs2_option::RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0);
-        dev.query_sensors()[0].set_option(rs2_option::RS2_OPTION_EXPOSURE, depth_exposure);
-        dev.query_sensors()[1].set_option(rs2_option::RS2_OPTION_EXPOSURE, rgb_exposure);
+        sensors[dpth_idx].set_option(rs2_option::RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0);
+        sensors[rgb_idx].set_option(rs2_option::RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0);
+        sensors[dpth_idx].set_option(rs2_option::RS2_OPTION_EXPOSURE, depth_exposure);
+        sensors[rgb_idx].set_option(rs2_option::RS2_OPTION_EXPOSURE, rgb_exposure);
     }
     catch (const rs2::error & e)
     {
@@ -363,8 +313,8 @@ int main(int argc, char * argv[])
     }
 
     // Print the autoexposure settings for the RGB and Depth sensor
-    std::cout << "Sensor " << get_sensor_name(dev.query_sensors()[0]) << " exposure: " << dev.query_sensors()[0].get_option(rs2_option::RS2_OPTION_EXPOSURE) << std::endl;
-    std::cout << "Sensor " << get_sensor_name(dev.query_sensors()[1]) << " exposure: " << dev.query_sensors()[1].get_option(rs2_option::RS2_OPTION_EXPOSURE) << std::endl;
+    std::cout << "Sensor " << get_sensor_name(sensors[dpth_idx]) << " exposure: " << sensors[dpth_idx].get_option(rs2_option::RS2_OPTION_EXPOSURE) << std::endl;
+    std::cout << "Sensor " << get_sensor_name(sensors[rgb_idx]) << " exposure: " << sensors[rgb_idx].get_option(rs2_option::RS2_OPTION_EXPOSURE) << std::endl;
 	
     // Check if camera supports loading a .json configuration
 	if (dev.is<rs400::advanced_mode>() && ( boost::filesystem::exists(json_file_name)) ) {
@@ -509,11 +459,7 @@ int main(int argc, char * argv[])
     
     // Get the device intrinsics
     auto color_stream       = profiles.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
-    auto resolution         = std::make_pair(color_stream.width(), color_stream.height());
     auto intr               = color_stream.get_intrinsics();
-    auto principal_point    = std::make_pair(intr.ppx, intr.ppy);
-    auto focal_length       = std::make_pair(intr.fx, intr.fy);
-    rs2_distortion model    = intr.model;
 
     auto dep                = profiles.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
     auto intr_depth         = dep.get_intrinsics();
