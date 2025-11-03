@@ -1,10 +1,10 @@
+cmake_minimum_required(VERSION 3.5)
 project(RealseRecorder)
-cmake_minimum_required(VERSION 3.1)
 
 # A minimal build configuration, with the 14 standard
 SET (CMAKE_BUILD_TYPE RELEASE CACHE STRING "Build configuration" FORCE)
 SET (CMAKE_CXX_STANDARD 14)
-SET (CMAKE_CXX_FLAGS "-g") 
+SET (CMAKE_CXX_FLAGS "-O2") # "-g"
 
 # Include Eigen library
 find_path(EIGEN3_INCLUDE_DIR    NAMES signature_of_eigen3_matrix_library

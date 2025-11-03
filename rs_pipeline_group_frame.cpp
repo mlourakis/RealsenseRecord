@@ -14,6 +14,8 @@
 #include <thread>
 #include <fstream>
 
+#include <Eigen/Dense>
+
 // A very basic logging 
 #define LOGs std::cout 
 
@@ -82,7 +84,7 @@ int main(int argc, char * argv[])
 try
 {
     if(argc < 3) { LOGs << "Not enough parameters. Please run as: rs_async_RGBDAccRot_synced $DATASET_DIRECTORY $DATASET_SIZE" << std::endl; return 0; }
-    int dataset_size = 100;
+    size_t dataset_size = 100;
 
     if(argc > 1) data_dir = argv[1];
     if(argc > 2) dataset_size = atoi(argv[2]);

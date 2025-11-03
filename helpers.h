@@ -1,6 +1,8 @@
 #ifndef CV_HELPERS
 #define CV_HELPERS
 
+#include <vector>
+
 #include "opencv2/opencv.hpp"
 using namespace cv;
 
@@ -9,8 +11,6 @@ using namespace cv;
 #include <boost/filesystem.hpp>                 // Create directories to store the data
 #include <math.h>
 
-#include <Eigen/Dense>
-
 using namespace rs2;
 using namespace std;
 
@@ -18,11 +18,18 @@ using namespace std;
 #define BEEP_ON  { int out_sys = system("canberra-gtk-play -f /files/Projects/UnderDev/roboslam/libraries/media/start_sound.ogg"); }
 #define BEEP_OFF { int out_sys = system("canberra-gtk-play -f /files/Projects/UnderDev/roboslam/libraries/media/prompt.ogg"); }
 
+// Retrieve combinations of supported RGB/depth resolutions + frame rates, the rgb and depth sensor indices,
+// as well as accel/gyro frequencies
+bool retrieve_res_and_rate_combos(const rs2::device& dev, const rs2_format rgb_fmt, const rs2_format depth_fmt,
+        std::map<std::pair<int, int>, std::vector<int>>& rgb_res_n_fps, int& rgb_idx,
+        std::map<std::pair<int, int>, std::vector<int>>& depth_res_n_fps, int& dpth_idx,
+        std::pair<std::vector<int>, std::vector<int>>& accel_n_gyro);
+
 // Platform independent way to create a directory, if it does not exist
 // ref: https://stackoverflow.com/questions/9235679/create-a-directory-if-it-doesnt-exist
 void create_dir_if_not_exists(std::string directory);
 
-// Retrieve the device name
+// Retrieve the sensor name
 std::string get_sensor_name(const rs2::sensor& sensor);
 // Get the depth sensor scale
 float get_depth_scale(rs2::device dev);
@@ -66,29 +73,6 @@ public:
     
     double _ts;
     cv::Mat _m;
-};
-
-#ifndef PI
-const double PI = 3.14159265358979323846;
-#endif
-struct float3 { 
-    float x, y, z; 
-    float3  operator*   (float t);
-    float3  operator-   (float t);
-    float3  operator-   (float3 t);
-    void    operator*=  (float t);
-    void    operator=   (float3 other);
-    void    add         (float t1, float t2, float t3);
-};
-struct float2 { float x, y; };
-
-struct rect
-{
-    float x, y;
-    float w, h;
-
-    // Create new rect within original boundaries with give aspect ration
-    rect adjust_ratio(float2 size) const;
 };
 
 #endif

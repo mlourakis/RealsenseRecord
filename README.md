@@ -39,8 +39,14 @@ This process will create two different executables, described  below:
 To record a dataset, simply execute the following command:
 ```bash
 # Record 300 frames with 60 FPS in the home/datadir/ directory
-./rs_async_drop_RGBDIMU "/home/datadir/" 60 300 
+./rs_async_drop_RGBDIMU "/home/datadir/" 300 60
 ```
+To record from a specific device (when multiple ones are plugged in), specify its serial with ``--dev_serial``:
+```bash
+# Record 300 frames with 60 FPS in the home/datadir/ directory from device with serial 038254756270
+./rs_async_drop_RGBDIMU "/home/datadir/" 300 60 --dev_serial 038254756270
+```
+Pressing 'Esc' will prematurely stop the recording with the frames that have been captured up to that point.
 The program will acquire the data from the different camera streams and store them in the directory specified in the first argument. The directory structure of the dataset has the following form:
 ```
 datadir
