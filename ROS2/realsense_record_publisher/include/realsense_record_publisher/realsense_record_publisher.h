@@ -83,7 +83,7 @@ namespace realsense_record_ros_publisher
 
     private:
         unsigned int _fps = 30;
-        bool _paused = true;
+        bool _paused = false;
         fs::path _dataset_directory;
         fs::path _rgb_index_file;
         fs::path _rgb_calibration_filename;
@@ -111,8 +111,11 @@ namespace realsense_record_ros_publisher
         // The calibration for the rgb camera
         std::unique_ptr<CameraCalibrationEntry> _rgb_calibration;
         
-        // Simulation time
-        rclcpp::Time _simulation_time;
+        // Use simulated time?
+        bool _use_sim_time;
+
+        // Publish /clock? (only when _use_sim_time == true)
+        bool _publish_clock;
 
         // ROS public node handle
         rclcpp::Node::SharedPtr _node;

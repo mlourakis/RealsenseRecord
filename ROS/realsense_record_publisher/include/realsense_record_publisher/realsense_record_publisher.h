@@ -108,8 +108,11 @@ namespace realsense_record_ros_publisher
         // The calibration for the rgb camera
         std::unique_ptr<CameraCalibrationEntry> _rgb_calibration;
         
-        // Simulation time
-        ros::Time _simulation_time;
+        // Use simulated time?
+        bool _use_sim_time;
+
+        // Publish /clock? (only when _use_sim_time == true)
+        bool _publish_clock;
 
         // ROS public node handle
         ros::NodeHandle nh_;  
