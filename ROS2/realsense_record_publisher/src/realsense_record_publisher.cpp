@@ -247,7 +247,36 @@ namespace realsense_record_ros_publisher
 
 		uint32_t seq_id = 0;
 
-		bool bdata = true; // true if none of the IndexReaders is eof
+		// Template for the fixed part of rgb camera info messages
+		sensor_msgs::msg::CameraInfo rgb_info_tmpl;
+		rgb_info_tmpl.header.frame_id = "camera_color_optical_frame";
+		rgb_info_tmpl.distortion_model = "plumb_bob";
+		rgb_info_tmpl.d = {_rgb_calibration->k1, _rgb_calibration->k2,
+					  _rgb_calibration->p1, _rgb_calibration->p2, _rgb_calibration->k3};
+		rgb_info_tmpl.k = {_rgb_calibration->fx, 0.0, _rgb_calibration->cx,
+						0.0, _rgb_calibration->fy, _rgb_calibration->cy,
+						0.0, 0.0, 1.0};
+		rgb_info_tmpl.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+		rgb_info_tmpl.p = {_rgb_calibration->fx, 0.0, _rgb_calibration->cx,
+						0.0, 0.0, _rgb_calibration->fy, _rgb_calibration->cy,
+						0.0, 0.0, 0.0, 1.0, 0.0};
+		rgb_info_tmpl.binning_x = rgb_info_tmpl.binning_y = 0;
+
+		// Template for the fixed part of depth camera info messages
+		sensor_msgs::msg::CameraInfo depth_info_tmpl;
+		depth_info_tmpl.header.frame_id = "camera_depth_optical_frame";
+		depth_info_tmpl.distortion_model = "plumb_bob";
+		depth_info_tmpl.d = {0.0, 0.0, 0.0, 0.0, 0.0};
+		depth_info_tmpl.k = {_rgb_calibration->fx, 0.0, _rgb_calibration->cx,
+						0.0, _rgb_calibration->fy, _rgb_calibration->cy,
+						0.0, 0.0, 1.0};
+		depth_info_tmpl.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+		depth_info_tmpl.p = {_rgb_calibration->fx, 0.0, _rgb_calibration->cx,
+						0.0, 0.0, _rgb_calibration->fy, _rgb_calibration->cy,
+						0.0, 0.0, 0.0, 1.0, 0.0};
+		depth_info_tmpl.binning_x = depth_info_tmpl.binning_y = 0;
+
+		bool bdata = true; // true if none of the IndexReaders is EOF
 		bdata &= _index_rgb->load_data();
 		bdata &= _index_dep->load_data();
 
@@ -277,41 +306,18 @@ namespace realsense_record_ros_publisher
 				clock_pub->publish(clock_msg);
 			}
 
-			// Create rgb camera info messages
-			sensor_msgs::msg::CameraInfo rgb_info;
+			// Create & publish rgb camera info messages
+			sensor_msgs::msg::CameraInfo rgb_info = rgb_info_tmpl;
 			rgb_info.header.stamp = _simulation_time;
-			rgb_info.header.frame_id = "camera_color_optical_frame";
 			rgb_info.height = rgb_frame.rows;
 			rgb_info.width = rgb_frame.cols;
-			rgb_info.distortion_model = "plumb_bob";
-			rgb_info.d = {_rgb_calibration->k1, _rgb_calibration->k2, 
-						  _rgb_calibration->p1, _rgb_calibration->p2, _rgb_calibration->k3};
-			rgb_info.k = {_rgb_calibration->fx, 0, _rgb_calibration->cx,
-							0, _rgb_calibration->fy, _rgb_calibration->cy,
-							0, 0, 1.0};
-			rgb_info.r = {1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0};			
-			rgb_info.p = {_rgb_calibration->fx, 0, _rgb_calibration->cx,
-							0, 0, _rgb_calibration->fy, _rgb_calibration->cy,
-							0, 0, 0, 1.0, 0};
-			rgb_info.binning_x = rgb_info.binning_y = 0;
 			_prgb_info_pub_->publish(rgb_info);
 
-			// Create depth camera info messages
-			sensor_msgs::msg::CameraInfo depth_info;
+			// Create & publish depth camera info messages
+			sensor_msgs::msg::CameraInfo depth_info = depth_info_tmpl;
 			depth_info.header.stamp = _simulation_time;
-			depth_info.header.frame_id = "camera_depth_optical_frame";
 			depth_info.height = depth_frame.rows;
 			depth_info.width = depth_frame.cols;
-			depth_info.distortion_model = "plumb_bob";
-			depth_info.d = {0, 0, 0, 0, 0};
-			depth_info.k = {_rgb_calibration->fx, 0, _rgb_calibration->cx,
-							0, _rgb_calibration->fy, _rgb_calibration->cy,
-							0, 0, 1.0};
-			depth_info.r = {1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0};			
-			depth_info.p = {_rgb_calibration->fx, 0, _rgb_calibration->cx,
-							0, 0, _rgb_calibration->fy, _rgb_calibration->cy,
-							0, 0, 0, 1.0, 0};
-			depth_info.binning_x = depth_info.binning_y = 0;
 			_pdepth_info_pub_->publish(depth_info);
 
 			// Publish images
@@ -320,7 +326,7 @@ namespace realsense_record_ros_publisher
 			sensor_msgs::msg::Image::SharedPtr depth_frame_msg = CreateDepthImageMsg(depth_frame, _simulation_time);
 			_pdepth_image_pub_->publish(depth_frame_msg);
 
-			last_pub_time = _node->now(); // must remain after publishing
+			last_pub_time = _node->now(); // must remain here (after publishing)
 
 			RCLCPP_INFO_STREAM(logger, "Frame " << seq_id);
 			seq_id++;
