@@ -18,6 +18,7 @@ find_package(image_transport REQUIRED)
 #find_package(OpenCV REQUIRED COMPONENTS highgui imgcodecs imgproc videoio)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(rosgraph_msgs REQUIRED)
 
 # Find libraries
 find_package(OpenCV REQUIRED)
@@ -41,6 +42,7 @@ ament_target_dependencies(realsense_record_publisher
   sensor_msgs
   cv_bridge
   image_transport
+  rosgraph_msgs
 )
 
 add_executable(listener src/listener.cpp)

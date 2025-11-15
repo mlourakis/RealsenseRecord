@@ -1,4 +1,7 @@
 #include "realsense_record_publisher/realsense_record_publisher.h"
+#include "rosgraph_msgs/msg/clock.hpp"
+#include <thread>
+#include <chrono>
 
 #include <stdio.h>
 #include <sys/ioctl.h> // For FIONREAD
@@ -18,7 +21,6 @@ namespace realsense_record_ros_publisher
         _depth_image_topic_name(depth_image_topic_name),
         _depth_info_topic_name(depth_info_topic_name),
         _pmain_loop_thread(nullptr),
-        _simulation_time(rclcpp::Clock().now()),                                          
         _node(node)
     {
 		// Declare parameters
@@ -32,6 +34,11 @@ namespace realsense_record_ros_publisher
 		node->declare_parameter<std::string>("depth_info_topic_name", "aligned_depth_to_color/camera_info");
 		node->declare_parameter<std::string>("depth_image_topic_name", "aligned_depth_to_color/image_raw");
 		node->declare_parameter<double>("fps", 30.0);
+		if(!node->has_parameter("use_sim_time"))
+		{
+			node->declare_parameter<bool>("use_sim_time", false);
+		}
+		node->declare_parameter<bool>("publish_clock", node->get_parameter("use_sim_time").as_bool()); // default depends on use_sim_time
 
 		// Get parameter values
 		_dataset_directory = node->get_parameter("dataset_directory").as_string();
@@ -44,6 +51,8 @@ namespace realsense_record_ros_publisher
 		_depth_info_topic_name = node->get_parameter("depth_info_topic_name").as_string();
 		_depth_image_topic_name = node->get_parameter("depth_image_topic_name").as_string();
 		_fps = node->get_parameter("fps").as_double();
+		_use_sim_time = node->get_parameter("use_sim_time").as_bool();
+		_publish_clock = node->get_parameter("publish_clock").as_bool();
 
 		// Check parameter values
 		auto logger = node->get_logger();
@@ -158,8 +167,15 @@ namespace realsense_record_ros_publisher
 			return;
 		}
 
+		if(!_use_sim_time)
+		{
+			_publish_clock = false;
+		}
+
 		RCLCPP_INFO_STREAM(logger, "Publishing to RGB img + info topics " << _rgb_image_topic_name << " + " << _rgb_info_topic_name);
 		RCLCPP_INFO_STREAM(logger, "Publishing to depth img + info topics " << _depth_image_topic_name << " + " << _depth_info_topic_name);
+		std::string clockinfo = std::string("YES (") + (_publish_clock ? "also" : "not") + " publishing /clock)";
+		RCLCPP_INFO(logger, "Using simulated time: %s", (_use_sim_time ? clockinfo.c_str() : "NO"));
     }
 
     // ROS-related initialization
@@ -220,13 +236,47 @@ namespace realsense_record_ros_publisher
 
 	void RealsenseRecordROSPublisher::MainLoop() 
 	{
-		rclcpp::Rate rate(static_cast<int>(_fps));
-		// Start simulation time
-		_simulation_time = rclcpp::Time(0, 0, RCL_ROS_TIME);
+		const rclcpp::Duration frame_interval = rclcpp::Duration::from_seconds(1.0 / _fps);
+		rclcpp::Time last_pub_time = _node->now();
 		
+		rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr clock_pub;
+		if (_use_sim_time && _publish_clock)
+		{
+			clock_pub = _node->create_publisher<rosgraph_msgs::msg::Clock>("/clock", 10);
+		}
+
 		uint32_t seq_id = 0;
 
-		bool bdata = true; // true if none of the IndexReaders is eof
+		// Template for the fixed part of rgb camera info messages
+		sensor_msgs::msg::CameraInfo rgb_info_tmpl;
+		rgb_info_tmpl.header.frame_id = "camera_color_optical_frame";
+		rgb_info_tmpl.distortion_model = "plumb_bob";
+		rgb_info_tmpl.d = {_rgb_calibration->k1, _rgb_calibration->k2,
+					  _rgb_calibration->p1, _rgb_calibration->p2, _rgb_calibration->k3};
+		rgb_info_tmpl.k = {_rgb_calibration->fx, 0.0, _rgb_calibration->cx,
+						0.0, _rgb_calibration->fy, _rgb_calibration->cy,
+						0.0, 0.0, 1.0};
+		rgb_info_tmpl.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+		rgb_info_tmpl.p = {_rgb_calibration->fx, 0.0, _rgb_calibration->cx,
+						0.0, 0.0, _rgb_calibration->fy, _rgb_calibration->cy,
+						0.0, 0.0, 0.0, 1.0, 0.0};
+		rgb_info_tmpl.binning_x = rgb_info_tmpl.binning_y = 0;
+
+		// Template for the fixed part of depth camera info messages
+		sensor_msgs::msg::CameraInfo depth_info_tmpl;
+		depth_info_tmpl.header.frame_id = "camera_depth_optical_frame";
+		depth_info_tmpl.distortion_model = "plumb_bob";
+		depth_info_tmpl.d = {0.0, 0.0, 0.0, 0.0, 0.0};
+		depth_info_tmpl.k = {_rgb_calibration->fx, 0.0, _rgb_calibration->cx,
+						0.0, _rgb_calibration->fy, _rgb_calibration->cy,
+						0.0, 0.0, 1.0};
+		depth_info_tmpl.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+		depth_info_tmpl.p = {_rgb_calibration->fx, 0.0, _rgb_calibration->cx,
+						0.0, 0.0, _rgb_calibration->fy, _rgb_calibration->cy,
+						0.0, 0.0, 0.0, 1.0, 0.0};
+		depth_info_tmpl.binning_x = depth_info_tmpl.binning_y = 0;
+
+		bool bdata = true; // true if none of the IndexReaders is EOF
 		bdata &= _index_rgb->load_data();
 		bdata &= _index_dep->load_data();
 
@@ -237,43 +287,37 @@ namespace realsense_record_ros_publisher
 			cv::Mat rgb_frame = cv::imread(_index_rgb->get_current_filename(), cv::IMREAD_UNCHANGED);
 			cv::Mat depth_frame = cv::imread(_index_dep->get_current_filename(), cv::IMREAD_UNCHANGED);
 
-			//_simulation_time = _node->now();
+			// Compute time since last publish
+			rclcpp::Duration elapsed = _node->now() - last_pub_time;
+			rclcpp::Duration remaining = frame_interval - elapsed;
+			if (remaining > rclcpp::Duration(0, 0))
+			{
+				std::this_thread::sleep_for(std::chrono::nanoseconds(remaining.nanoseconds())); // sleep for the remaining time
+			}
+
+			// If _use_sim_time, use the rgb timestamp in nanoseconds (convert from millis)
+			rclcpp::Time _simulation_time = (!_use_sim_time)? _node->now() : rclcpp::Time(static_cast<int64_t>(_index_rgb->get_current_timestamp() * 1E6));
 			
-			// Create rgb camera info messages
-			sensor_msgs::msg::CameraInfo rgb_info;
+			// Publish clock?
+			if (_use_sim_time && _publish_clock)
+			{
+				rosgraph_msgs::msg::Clock clock_msg;
+				clock_msg.clock = _simulation_time;
+				clock_pub->publish(clock_msg);
+			}
+
+			// Create & publish rgb camera info messages
+			sensor_msgs::msg::CameraInfo rgb_info = rgb_info_tmpl;
 			rgb_info.header.stamp = _simulation_time;
-			rgb_info.header.frame_id = "camera_color_optical_frame";
 			rgb_info.height = rgb_frame.rows;
 			rgb_info.width = rgb_frame.cols;
-			rgb_info.distortion_model = "plumb_bob";
-			rgb_info.d = {_rgb_calibration->k1, _rgb_calibration->k2, 
-						  _rgb_calibration->p1, _rgb_calibration->p2, _rgb_calibration->k3};
-			rgb_info.k = {_rgb_calibration->fx, 0, _rgb_calibration->cx,
-							0, _rgb_calibration->fy, _rgb_calibration->cy,
-							0, 0, 1.0};
-			rgb_info.r = {1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0};			
-			rgb_info.p = {_rgb_calibration->fx, 0, _rgb_calibration->cx,
-							0, 0, _rgb_calibration->fy, _rgb_calibration->cy,
-							0, 0, 0, 1.0, 0};
-			rgb_info.binning_x = rgb_info.binning_y = 0;
 			_prgb_info_pub_->publish(rgb_info);
 
-			// Create depth camera info messages
-			sensor_msgs::msg::CameraInfo depth_info;
+			// Create & publish depth camera info messages
+			sensor_msgs::msg::CameraInfo depth_info = depth_info_tmpl;
 			depth_info.header.stamp = _simulation_time;
-			depth_info.header.frame_id = "camera_depth_optical_frame";
 			depth_info.height = depth_frame.rows;
 			depth_info.width = depth_frame.cols;
-			depth_info.distortion_model = "plumb_bob";
-			depth_info.d = {0, 0, 0, 0, 0};
-			depth_info.k = {_rgb_calibration->fx, 0, _rgb_calibration->cx,
-							0, _rgb_calibration->fy, _rgb_calibration->cy,
-							0, 0, 1.0};
-			depth_info.r = {1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0};			
-			depth_info.p = {_rgb_calibration->fx, 0, _rgb_calibration->cx,
-							0, 0, _rgb_calibration->fy, _rgb_calibration->cy,
-							0, 0, 0, 1.0, 0};
-			depth_info.binning_x = depth_info.binning_y = 0;
 			_pdepth_info_pub_->publish(depth_info);
 
 			// Publish images
@@ -282,20 +326,21 @@ namespace realsense_record_ros_publisher
 			sensor_msgs::msg::Image::SharedPtr depth_frame_msg = CreateDepthImageMsg(depth_frame, _simulation_time);
 			_pdepth_image_pub_->publish(depth_frame_msg);
 
+			last_pub_time = _node->now(); // must remain here (after publishing)
+
 			RCLCPP_INFO_STREAM(logger, "Frame " << seq_id);
-			rate.sleep();
-			_simulation_time += rclcpp::Duration::from_seconds(1.0 / _fps);
 			seq_id++;
 			
 			fflush(stdin);
     		
-			if (kbhit()) {
+			if (kbhit())
+			{
 				int ch = getchar();
 				if (ch == 32) _paused = !_paused;
 				RCLCPP_INFO_STREAM(logger, (_paused?"":"Not ") << "Paused...\n");
 			}
 
-			if(_paused)
+			if (_paused)
 			{
 				fflush(stdin);
 				if(getchar()==32) _paused = false;
@@ -380,7 +425,7 @@ namespace realsense_record_ros_publisher
 			tcgetattr(STDIN, &term);
 			term.c_lflag &= ~ICANON;
 			tcsetattr(STDIN, TCSANOW, &term);
-			setbuf(stdin, NULL);
+			//setbuf(stdin, NULL);
 			initflag = true;
 		}
 
