@@ -80,6 +80,7 @@ namespace realsense_record_ros_publisher
     private:
         unsigned int _fps = 30;
         bool _paused = true;
+        unsigned int _start_frame = 0;
         fs::path _dataset_directory;
         fs::path _rgb_index_file;
         fs::path _rgb_calibration_filename;

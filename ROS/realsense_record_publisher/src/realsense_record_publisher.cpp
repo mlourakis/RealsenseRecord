@@ -65,6 +65,20 @@ namespace realsense_record_ros_publisher
 			return;
 		} else _depth_index_file = depth_index_file;
 
+		int start_fr;
+		if (!nhp_.getParam("start_frame", start_fr))
+		{
+			ROS_ERROR("Start frame index not set.\n");
+			ros::shutdown();
+			return;
+		}
+		if (start_fr < 0)
+		{
+			ROS_INFO("Negative \"start_frame\" ignored");
+			start_fr = 0;
+		}
+		_start_frame = start_fr;
+
 		if (!nhp_.getParam("rgb_info_topic_name", _rgb_info_topic_name))
 		{
 			ROS_ERROR("RGB info topic name not set.\n");
@@ -252,6 +266,13 @@ namespace realsense_record_ros_publisher
 					0.0, 0.0, 0.0, 1.0, 0.0};
 		depth_info_tmpl.binning_x = depth_info_tmpl.binning_y = 0;
 
+		if (_start_frame > 0)
+		{
+			// start from index _start_frame
+			_index_rgb->seek(_start_frame);
+			_index_dep->seek(_start_frame);
+			seq_id = _start_frame;
+		}
 
 		bool bdata = true; // true if none of the IndexReaders is EOF
 		bdata &= _index_rgb->load_data();

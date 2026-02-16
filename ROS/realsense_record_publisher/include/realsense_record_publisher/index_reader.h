@@ -88,6 +88,21 @@ public:
         }
         std::cout << std::endl;
     }
+
+    bool seek(size_t line_number) {
+        if (!_index_file_stream.is_open()) return false;
+
+        _index_file_stream.clear();
+        _index_file_stream.seekg(0);
+
+        std::string temp;
+        for (size_t i = 0; i < line_number; i++) {
+            if (!_index_file_stream.good()) return false;
+            std::getline(_index_file_stream, temp); // skip line
+        }
+
+        return true;
+    }
 protected:
     // convert a string to a series of tokens, seperated by delimiters
     void tokenize (const std::string &str, std::vector<std::string> &tokens, std::string delimiters = " ")  {

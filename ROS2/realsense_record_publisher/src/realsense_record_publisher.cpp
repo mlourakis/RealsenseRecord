@@ -29,6 +29,7 @@ namespace realsense_record_ros_publisher
 		node->declare_parameter<std::string>("rgb_calibration_filename", "");
 		node->declare_parameter<std::string>("rgb_distortion_coefficients_filename", "");
 		node->declare_parameter<std::string>("depth_index_file", "");
+		node->declare_parameter<int>("start_frame", 0);
 		node->declare_parameter<std::string>("rgb_info_topic_name", "rgb/camera_info");
 		node->declare_parameter<std::string>("rgb_image_topic_name", "rgb/image_raw");
 		node->declare_parameter<std::string>("depth_info_topic_name", "aligned_depth_to_color/camera_info");
@@ -46,6 +47,7 @@ namespace realsense_record_ros_publisher
 		_rgb_calibration_filename = node->get_parameter("rgb_calibration_filename").as_string();
 		_rgb_distortion_coefficients_filename = node->get_parameter("rgb_distortion_coefficients_filename").as_string();
 		_depth_index_file = node->get_parameter("depth_index_file").as_string();
+		int start_fr = node->get_parameter("start_frame").as_int();
 		_rgb_info_topic_name = node->get_parameter("rgb_info_topic_name").as_string();
 		_rgb_image_topic_name = node->get_parameter("rgb_image_topic_name").as_string();
 		_depth_info_topic_name = node->get_parameter("depth_info_topic_name").as_string();
@@ -56,6 +58,13 @@ namespace realsense_record_ros_publisher
 
 		// Check parameter values
 		auto logger = node->get_logger();
+		if (start_fr < 0)
+		{
+			RCLCPP_INFO(logger, "Negative \"start_frame\" ignored");
+			start_fr = 0;
+		}
+		_start_frame = start_fr;
+
 		if (_dataset_directory.empty())
 		{
 			RCLCPP_ERROR(logger, "Dataset directory not set");
@@ -275,6 +284,14 @@ namespace realsense_record_ros_publisher
 						0.0, 0.0, _rgb_calibration->fy, _rgb_calibration->cy,
 						0.0, 0.0, 0.0, 1.0, 0.0};
 		depth_info_tmpl.binning_x = depth_info_tmpl.binning_y = 0;
+
+		if (_start_frame > 0)
+		{
+			// start from index _start_frame
+			_index_rgb->seek(_start_frame);
+			_index_dep->seek(_start_frame);
+			seq_id = _start_frame;
+		}
 
 		bool bdata = true; // true if none of the IndexReaders is EOF
 		bdata &= _index_rgb->load_data();

@@ -27,6 +27,7 @@ After the dataset is synchronized, you can launch the publisher:
 roslaunch realsense_record_publisher realsense_record_publisher.launch
 ```
 The parameters of the publisher are located in the file ```launch/realsense_record_publisher.launch```.
+In particular, ```start_frame``` allows publishing to begin from an arbitrary frame index rather than the first one.
 
 #### Using simulated time
 The publisher can be instructed to use the timestamps marking when data were recorded instead of the current time. To do this, set ``use_sim_time`` with
