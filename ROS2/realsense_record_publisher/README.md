@@ -28,7 +28,7 @@ In particular, ```start_frame``` allows publishing to begin from an arbitrary fr
 #### Using simulated time
 The publisher can be instructed to use the timestamps marking when data were recorded instead of the current time. To do this, set ``use_sim_time`` with
 ```
-ros2 launch realsense_record_publisher realsense_record_publisher_launch.py use_sim_time:=false
+ros2 launch realsense_record_publisher realsense_record_publisher_launch.py use_sim_time:=true
 ```
-By default, ``/clock`` is also published in this case. To disable it, add the launch parameter ``publish_clock:=true``.
+By default, ``/clock`` is also published in this case. To disable it, add the launch parameter ``publish_clock:=false``.
 Note that all subscribers should also set ``use_sim_time``.
