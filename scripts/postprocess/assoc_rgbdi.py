@@ -19,7 +19,33 @@ import argparse
 import sys
 import os
 import numpy
-from tqdm import tqdm
+
+try:
+    from tqdm import tqdm
+except ImportError: # tqdm fallback
+    class tqdm:
+        def __init__(self, iterable=None, total=None, desc=None):
+            self.total = total
+            self.count = 0
+            self.desc = desc
+            if desc:
+                print(desc)
+
+        def update(self, n=1):
+            self.count += n
+            if self.total:
+                percent = 100 * self.count / self.total
+                sys.stdout.write(f"\r{self.desc}: {percent:.1f}%")
+            else:
+                sys.stdout.write(f"\r{self.desc}: {self.count}")
+            sys.stdout.flush()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            print()
+
 
 def read_file_list(filename):
     """
@@ -40,11 +66,10 @@ def read_file_list(filename):
     data = file.read()
     lines = data.replace(","," ").replace("\t"," ").split("\n") 
     list = [[v.strip() for v in line.split(" ") if v.strip()!=""] for line in lines if len(line)>0 and line[0]!="#"]
-    #HERE USED * to get the actual value
-    list = [(float(l[0]),str(*l[1:])) for l in list if len(l)>1]
+    list = [(float(l[0]), " ".join(l[1:])) for l in list if len(l)>1]
     return dict(list)
 
-def associate(first_list, second_list,offset,op_name):
+def associate(first_list, second_list, offset, max_diff, op_name):
     """
     Associate two dictionaries of (stamp,data). As the time stamps never match exactly, we aim 
     to find the closest match for every input tuple.
@@ -53,6 +78,7 @@ def associate(first_list, second_list,offset,op_name):
     first_list -- first dictionary of (stamp,data) tuples
     second_list -- second dictionary of (stamp,data) tuples
     offset -- time offset between both dictionaries (e.g., to model the delay between the sensors)
+    max_diff -- maximum allowed time gap between two timestamps
     op_name -- name of the operation for couts
 
     Output:
@@ -67,7 +93,7 @@ def associate(first_list, second_list,offset,op_name):
     with tqdm(total=len(first_keys), desc=op_name) as pbar_outer:
         for a in first_keys:
             for b in second_keys:
-                if abs(a - (b + offset)) < 20:
+                if abs(a - (b + offset)) < max_diff:
                     potential_matches.append((abs(a - (b + offset)), a, b))
             pbar_outer.update()
 
@@ -87,7 +113,7 @@ def associate(first_list, second_list,offset,op_name):
     return matches
 
 
-def associate_no_remove(first_list, second_list,offset, op_name):
+def associate_no_remove(first_list, second_list, offset, max_diff, op_name):
     """
     Associate two dictionaries of (stamp,data). As the time stamps never match exactly, we aim 
     to find the closest match for every input tuple.
@@ -96,6 +122,7 @@ def associate_no_remove(first_list, second_list,offset, op_name):
     first_list -- first dictionary of (stamp,data) tuples
     second_list -- second dictionary of (stamp,data) tuples
     offset -- time offset between both dictionaries (e.g., to model the delay between the sensors)
+    max_diff -- maximum allowed time gap between two timestamps
     op_name -- name of the operation for couts
 
     Output:
@@ -110,7 +137,7 @@ def associate_no_remove(first_list, second_list,offset, op_name):
     with tqdm(total=len(first_keys), desc=op_name) as pbar_outer:
         for a in first_keys:
             for b in second_keys:
-                if abs(a - (b + offset)) < 20:
+                if abs(a - (b + offset)) < max_diff:
                     potential_matches.append((abs(a - (b + offset)), a, b))
             pbar_outer.update()
 
@@ -142,21 +169,23 @@ if __name__ == '__main__':
     parser.add_argument('gyr_file', help='gyr text file (format: timestamp data)')
 
     parser.add_argument('--first_only', help='only output associated lines from first file', action='store_true')
-    parser.add_argument('--offset', help='time offset added to the timestamps of the second file (default: 0.0)',default=0.0)
-    parser.add_argument('--max_difference', help='maximally allowed time difference for matching entries (default: 0.02)',default=0.02)
+    parser.add_argument('--offset', help='time offset added to the timestamps of the second file (sec; default: 0.0)',default=0.0)
+    parser.add_argument('--max_difference', help='maximally allowed time difference for matching entries (sec; default: 0.02)',default=0.02)
     args = parser.parse_args()
 
     depth_list = read_file_list(args.depth_file)
     rgb_list   = read_file_list(args.rgb_file)
     acc_list   = read_file_list(args.acc_file)
     gyr_list   = read_file_list(args.gyr_file)
+    max_diff   = float(args.max_difference) * 1000 # in ms
+    offset     = float(args.offset) * 1000 # in ms
 
-    print("Associating the RGB, Depth, Accelerometer and Gyroscope measurements, based on their timestamps")
+    print(f"Associating the RGB, Depth, Accelerometer and Gyroscope measurements, based on their timestamps; max gap {max_diff}")
     #For preintegration we need only one acceleration - gyro pair so associate one-to-one accel gyro. We want 
     #the maximum pairs of accel-gyro for each depth frame so use associate_no_remove for this purpose. 
-    matches_depthrgb = associate		    (depth_list,    rgb_list,   float(args.offset), "Depth with RGB")    #Associate depth with rgb images
-    matches_depthacc = associate_no_remove  (depth_list,    acc_list,   float(args.offset), "Depth with Accelerations")    #Associate one depth with one Acceleration Frames
-    matches_accgyr   = associate		    (acc_list,      gyr_list,   float(args.offset), "Acceleration with Gyro")    #Associate one acceleration frame with one gyro
+    matches_depthrgb = associate		  (depth_list, rgb_list, offset, max_diff, "Depth with RGB")            # Associate depth with rgb images
+    matches_depthacc = associate_no_remove(depth_list, acc_list, offset, max_diff, "Depth with Accelerations")  # Associate one depth with one acceleration frame
+    matches_accgyr   = associate		  (acc_list,   gyr_list, offset, max_diff, "Acceleration with Gyro")    # Associate one acceleration frame with one gyro
 
     # print(matches_accgyr)
     depth_keys  = list(depth_list)#.keys()
