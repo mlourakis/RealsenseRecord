@@ -96,6 +96,14 @@ The figure below shows the typical program output, that couts the matched sets o
 
 To remove possible lags during data acquisition, we index all data using their timestamp, and dump them to the disk after recording finishes.
 
+## [Visualization](#Visualization)
+
+After synchronization, the captured RGBD data can be played back for visual inspection. This is achieved by running the following script:
+```bash
+python scripts/visualization/playback.py  --rgb_list rgb_aligned.txt --depth_list depth_aligned.txt --base_path /home/data/path/
+```
+*NOTE:* The script requires the Python module for OpenCV (cv2) and NumPy.
+
 ## Intel realsense cameras and timestamps
 The realsense cameras support [four different types of timestamps](https://intelrealsense.github.io/librealsense/doxygen/classrs2_1_1frame.html):
 | Timestamp Type | Description  |
